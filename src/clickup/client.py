@@ -46,6 +46,12 @@ class ClickUpClient:
         url = f"{self.base_url}/task/{task_id}/comment"
         response = requests.get(url, headers=self.headers)
         return response.json()
+        
+    def get_comment_thread(self, comment_id):
+        url = f"{self.base_url}/comment/{comment_id}/reply"
+        resp = requests.get(url, headers=self.headers)
+        resp.raise_for_status()
+        return resp.json().get("comments", [])     
 
     def get_task_activity(self, task_id):
         url = f"{self.base_url}/task/{task_id}/activity"
