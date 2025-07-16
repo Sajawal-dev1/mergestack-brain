@@ -6,3 +6,5 @@ def load_env():
     return {
         "CLICKUP_API_KEY": os.getenv("CLICKUP_API_KEY")
     }
+
+
