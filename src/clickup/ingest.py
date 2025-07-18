@@ -1,9 +1,9 @@
 from src.clickup.client import ClickUpClient
-from src.rag.pipeline import store_documents
+from src.rag.rag_pipeline import store_documents_openai
 from datetime import datetime
 import tenacity
-# import spacy  # Optional: for keyword extraction
-# nlp = spacy.load("en_core_web_sm")  # Load small English model
+import re
+from collections import Counter
 
 def format_timestamp(ts):
     """Format timestamp from milliseconds to ISO string and return numeric value."""
@@ -17,10 +17,33 @@ def format_timestamp(ts):
         return None, None
 
 def extract_keywords(text):
-    """Extract keywords using spaCy (optional)."""
-    # doc = nlp(text.lower())
-    # return [token.text for token in doc if token.is_alpha and not token.is_stop and len(token.text) > 3]
-    return []  # Placeholder if spaCy is not used
+    """Extract keywords from text using simple rule-based logic."""
+    if not text or not isinstance(text, str):
+        return []
+    
+    # Convert to lowercase and remove punctuation
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    
+    # Split into words and remove stop words
+    stop_words = {
+        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has',
+        'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was',
+        'were', 'will', 'with'
+    }
+    words = [word for word in text.split() if word not in stop_words and len(word) > 2]
+    
+    # Get the most common words (limit to top 5)
+    word_counts = Counter(words)
+    keywords = [word for word, _ in word_counts.most_common(5)]
+    
+    # Add domain-specific terms if present
+    domain_terms = ['stripe', 'integration', 'payment', 'api', 'webhook']
+    for term in domain_terms:
+        if term in text:
+            keywords.append(term)
+    
+    return list(set(keywords))
 
 def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activity=None, list_name=None, folder_name=None, team_id=None):
     """Build documents for a task, its comments, replies, and activity with enriched content and metadata."""
@@ -32,18 +55,38 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
     task_description = task.get("description", "") or "No description provided"
     created, created_ms = format_timestamp(task.get("date_created"))
     updated, updated_ms = format_timestamp(task.get("date_updated"))
-    due_date, due_date_ms = format_timestamp(task.get("due_date",'none'))
+    due_date, due_date_ms = format_timestamp(task.get("due_date", 'none'))
     assignees = task.get("assignees", [])
     assignee_names = [a.get("username", "Unknown") for a in assignees if isinstance(a, dict)]
-    assignee_ids = [a.get("id", "Unknown") for a in assignees if isinstance(a, dict)]
+    assignee_ids = [str(a.get("id", "")) for a in assignees if isinstance(a, dict) and a.get("id")]
     tags = [t.get("name", "") for t in task.get("tags", []) if isinstance(t, dict)]
     status = task.get("status", {}).get("status", "Unknown") if isinstance(task.get("status"), dict) else "Unknown"
-    priority = task.get("priority", "None")
-    custom_fields = {cf.get("name", "Unknown"): cf.get("value") for cf in task.get("custom_fields", []) if isinstance(cf, dict)}
+   # Handle priority field to ensure it's a string
+    priority_raw = task.get("priority", "None")
+    if isinstance(priority_raw, dict):
+        # Extract the priority name/value (e.g., "High", "Low") from the dictionary
+        priority = priority_raw.get("priority", priority_raw.get("value", "None"))
+        if not isinstance(priority, str):
+            print(f"⚠️ Unexpected priority format for task {task_id}: {priority_raw}")
+            priority = str(priority) if priority is not None else "None"
+    else:
+        priority = str(priority_raw) if priority_raw is not None else "None"
+    custom_fields = []
+    for cf in task.get("custom_fields", []):
+        if isinstance(cf, dict):
+            name = cf.get("name", "Unknown")
+            value = cf.get("value")
+            if value is not None:
+                value = str(value) if isinstance(value, (list, dict)) else value
+                custom_fields.append(f"{name}: {value}")
+            else:
+                custom_fields.append(f"{name}: N/A")
 
     # Generate keywords for hybrid search
     keywords = [task_name.lower()] + [t.lower() for t in tags] + ([status.lower()] if status else [])
     keywords.extend(extract_keywords(task_description))
+    for field in custom_fields:
+        keywords.extend(extract_keywords(field))
     if "stripe" in task_name.lower() or any("stripe" in t.lower() for t in tags) or "stripe" in task_description.lower():
         keywords.append("stripe")
     if "integration" in task_name.lower() or any("integration" in t.lower() for t in tags) or "integration" in task_description.lower():
@@ -52,13 +95,14 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
 
     base_metadata = {
         "task_id": task_id,
+        "task_name": task_name,
+        "task_description": task_description,
         "space_id": space_id,
         "list_id": list_id,
         "folder_id": folder_id or "None",
         "folder_name": folder_name or "None",
         "list_name": list_name or "None",
         "team_id": team_id or "None",
-        "task_name": task_name,
         "created_at": created,
         "created_at_ms": created_ms,
         "updated_at": updated,
@@ -81,26 +125,32 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
 
     # 1. Task Document
     task_content = (
-        f"Task: {task_name}\n"
+        f"Task Title: {task_name}\n"
         f"Description: {task_description}\n"
         f"Status: {status}\n"
         f"Priority: {priority}\n"
         f"Due Date: {due_date or 'None'}\n"
-        f"Created: {created or 'Unknown'}\n"
-        f"Updated: {updated or 'Unknown'}\n"
+        f"Created At: {created or 'Unknown'}\n"
+        f"Updated At: {updated or 'Unknown'}\n"
         f"Assignees: {', '.join(assignee_names) or 'None'}\n"
         f"Tags: {', '.join(tags) or 'None'}\n"
-        f"Custom Fields: {', '.join([f'{k}: {v}' for k, v in custom_fields.items()]) or 'None'}"
+        f"Custom Fields: {', '.join(custom_fields) or 'None'}\n"
+        f"List: {list_name or 'None'}\n"
+        f"Folder: {folder_name or 'None'}\n"
+        f"Space ID: {space_id}\n"
+        f"Team ID: {team_id or 'None'}"
     )
     if task_name or task_description:
         docs.append({
             "content": task_content.strip(),
             "metadata": {
                 **base_metadata,
-                "type": "task",
+                "document_type": "task",
+                "parent_task_id": task_id,
                 "date": created[:10] if created else None,
                 "full_timestamp": created,
-                "timestamp_ms": created_ms
+                "timestamp_ms": created_ms,
+                "content": task_content.strip(),
             }
         })
 
@@ -112,26 +162,34 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
 
         comment_ts, comment_ts_ms = format_timestamp(c.get("date"))
         comment_user = c.get("user", {}).get("username", "Unknown")
-        comment_user_id = c.get("user", {}).get("id", "Unknown")
+        comment_user_id = str(c.get("user", {}).get("id", "Unknown"))
         comment_content = (
-            f"Task: {task_name}\n"
-            f"Comment by {comment_user} on {comment_ts[:10] if comment_ts else 'Unknown'}:\n"
-            f"{comment_text}"
+            f"Task Title: {task_name}\n"
+            f"Comment by: {comment_user}\n"
+            f"Comment Date: {comment_ts[:10] if comment_ts else 'Unknown'}\n"
+            f"Comment: {comment_text}\n"
+            f"List: {list_name or 'None'}\n"
+            f"Folder: {folder_name or 'None'}"
         )
         discussion_text.append(comment_content)
+        comment_keywords = extract_keywords(comment_text)
+        keywords_combined = list(set(keywords + comment_keywords))
 
         docs.append({
             "content": comment_content.strip(),
             "metadata": {
                 **base_metadata,
-                "type": "comment",
+                "document_type": "comment",
                 "user": comment_user,
                 "user_id": comment_user_id,
                 "timestamp": comment_ts,
                 "timestamp_ms": comment_ts_ms,
                 "date": comment_ts[:10] if comment_ts else None,
                 "full_timestamp": comment_ts,
-                "comment_id": c.get("id")
+                "comment_id": c.get("id"),
+                "parent_task_id": task_id,
+                "keywords": keywords_combined,
+                "content": comment_content.strip(),
             }
         })
 
@@ -142,26 +200,35 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
 
             reply_ts, reply_ts_ms = format_timestamp(reply.get("date"))
             reply_user = reply.get("user", {}).get("username", "Unknown")
-            reply_user_id = reply.get("user", {}).get("id", "Unknown")
+            reply_user_id = str(reply.get("user", {}).get("id", "Unknown"))
             reply_content = (
-                f"Task: {task_name}\n"
-                f"Reply to comment by {comment_user} by {reply_user} on {reply_ts[:10] if reply_ts else 'Unknown'}:\n"
-                f"{reply_text}"
+                f"Task Title: {task_name}\n"
+                f"Reply to comment by: {comment_user}\n"
+                f"Reply by: {reply_user}\n"
+                f"Reply Date: {reply_ts[:10] if reply_ts else 'Unknown'}\n"
+                f"Reply: {reply_text}\n"
+                f"List: {list_name or 'None'}\n"
+                f"Folder: {folder_name or 'None'}"
             )
             discussion_text.append(reply_content)
+            reply_keywords = extract_keywords(reply_text)
+            keywords_combined = list(set(keywords + reply_keywords))
 
             docs.append({
                 "content": reply_content.strip(),
                 "metadata": {
                     **base_metadata,
-                    "type": "reply",
- "user": reply_user,
+                    "document_type": "reply",
+                    "user": reply_user,
                     "user_id": reply_user_id,
                     "timestamp": reply_ts,
                     "timestamp_ms": reply_ts_ms,
                     "date": reply_ts[:10] if reply_ts else None,
                     "full_timestamp": reply_ts,
-                    "parent_comment_id": c.get("id")
+                    "parent_comment_id": c.get("id"),
+                    "parent_task_id": task_id,
+                    "keywords": keywords_combined,
+                    "content": reply_content.strip(),
                 }
             })
 
@@ -171,45 +238,66 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
         act_text = a.get("text_content", "").strip()
         act_type = a.get("type", "Unknown")
         act_user = a.get("username", "Unknown")
-        act_user_id = a.get("user_id", "Unknown")
+        act_user_id = str(a.get("user_id", "Unknown"))
         if not act_text:
             continue
 
         act_content = (
-            f"Task: {task_name}\n"
-            f"Activity by {act_user} on {act_ts[:10] if act_ts else 'Unknown'} ({act_type}):\n"
-            f"{act_text}"
+            f"Task Title: {task_name}\n"
+            f"Activity by: {act_user}\n"
+            f"Activity Type: {act_type}\n"
+            f"Activity Date: {act_ts[:10] if act_ts else 'Unknown'}\n"
+            f"Activity: {act_text}\n"
+            f"List: {list_name or 'None'}\n"
+            f"Folder: {folder_name or 'None'}"
         )
+        act_keywords = extract_keywords(act_text)
+        keywords_combined = list(set(keywords + act_keywords))
 
         docs.append({
             "content": act_content.strip(),
             "metadata": {
                 **base_metadata,
-                "type": "activity",
+                "document_type": "activity",
                 "user": act_user,
                 "user_id": act_user_id,
                 "timestamp": act_ts,
                 "timestamp_ms": act_ts_ms,
                 "date": act_ts[:10] if act_ts else None,
                 "full_timestamp": act_ts,
-                "activity_type": act_type
+                "activity_type": act_type,
+                "parent_task_id": task_id,
+                "keywords": keywords_combined,
+                "content": act_content.strip(),
             }
         })
 
     # 4. Aggregated Discussion Document
     if discussion_text:
+        discussion_content = (
+            f"Task Title: {task_name}\n"
+            f"Discussion Summary:\n"
+            f"{'-' * 40}\n"
+            f"{'\n\n'.join(discussion_text)}\n"
+            f"{'-' * 40}\n"
+            f"List: {list_name or 'None'}\n"
+            f"Folder: {folder_name or 'None'}"
+        )
         docs.append({
-            "content": "\n\n".join(discussion_text).strip(),
+            "content": discussion_content.strip(),
             "metadata": {
                 **base_metadata,
-                "type": "discussion",
+                "document_type": "discussion",
                 "date": created[:10] if created else None,
                 "full_timestamp": created,
-                "timestamp_ms": created_ms
+                "timestamp_ms": created_ms,
+                "parent_task_id": task_id,
+                "content": discussion_content.strip(),
             }
         })
 
     return docs
+
 
 def ingest_clickup_tasks(team_id, space_id, namespace="default"):
     """Ingest ClickUp tasks, comments, and activity into Pinecone."""
@@ -333,7 +421,7 @@ def ingest_clickup_tasks(team_id, space_id, namespace="default"):
 
     print(f"\n📦 Prepared {len(all_docs)} documents to store in namespace: {namespace}")
     if all_docs:
-        store_documents(all_docs, namespace=namespace)
+        store_documents_openai(all_docs, namespace=namespace)
     else:
         print("❌ No documents to store.")
 
