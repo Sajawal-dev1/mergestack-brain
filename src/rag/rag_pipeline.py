@@ -39,7 +39,7 @@ def store_documents_openai(docs, namespace="default"):
             }],
             namespace=namespace
         )
-        
+
 def extract_date_range(question: str):
     """Extracts the earliest and latest dates from a user's question."""
     parsed = dateparser.search.search_dates(question, settings={'PREFER_DATES_FROM': 'past'})
@@ -51,7 +51,7 @@ def extract_date_range(question: str):
     return start, end
 
 def get_relevant_docs(question, namespace="default", metadata_filter=None):
-    """Retrieve relevant documents from Pinecone."""
+    """Retrieve relevant documents from Pinecone with content."""
     pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     index_name = get_pinecone_index_name()
     index = pc.Index(index_name)
@@ -62,9 +62,20 @@ def get_relevant_docs(question, namespace="default", metadata_filter=None):
         vector=embedding,
         top_k=5,
         namespace=namespace,
-        filter=metadata_filter if metadata_filter else {}
+        filter=metadata_filter if metadata_filter else {},
+        include_metadata=True
     )
-    return [match["id"] for match in results["matches"]]
+    # Return list of documents with id and content (assuming content is in metadata or payload)
+    docs = []
+    for match in results["matches"]:
+        doc_id = match["id"]
+        # Change "metadata" or "payload" to your actual field name storing document content
+        content = match.get("metadata", {}).get("content") or match.get("payload", {}).get("content")
+        if content is None:
+            content = "<no content available>"
+        docs.append({"id": doc_id, "content": content})
+    return docs
+
 
 def run_rag_pipeline(question: str, namespace="default") -> str:
     """RAG pipeline using Open AI SDK."""
@@ -82,7 +93,7 @@ def run_rag_pipeline(question: str, namespace="default") -> str:
         else:
             metadata_filter = {"created_at_ms": {"$gte": start_ms, "$lte": end_ms}}
 
-    relevant_docs = get_relevant_docs(question, namespace, metadata_filter)
+    relevant_docs = get_relevant_docs(question, namespace)
     context = "\n".join([f"Doc ID: {doc_id}" for doc_id in relevant_docs])
 
     llm = get_llm()
