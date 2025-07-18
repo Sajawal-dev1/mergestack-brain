@@ -17,12 +17,19 @@ def store_documents_openai(docs, namespace="default"):
         content = doc.get("content", "")
         metadata = doc.get("metadata", {})
         if not content:
-            continue
+            continue  # Skip docs without content
 
-        # Generate unique ID using task_id, doc type, and content hash
-        doc_id = f"{metadata.get('task_id', 'unknown')}_{metadata.get('document_type', 'unknown')}_{metadata.get('created_at_ms', '0')}"
+        # Collect stable fields to create a reproducible unique ID
+        task_id = metadata.get('task_id', 'unknown')
+        doc_type = metadata.get('document_type', 'unknown')
+        created_at_ms = metadata.get('created_at_ms', '0')
 
+        # Combine stable fields + content snippet (first 200 chars)
+        id_source = f"{task_id}_{doc_type}_{created_at_ms}_{content[:200]}"
         
+        # Create a SHA256 hash of the id_source for fixed-length unique ID
+        doc_id = hashlib.sha256(id_source.encode('utf-8')).hexdigest()
+
         embedding = embedder(content)
         index.upsert(
             vectors=[{
@@ -32,7 +39,7 @@ def store_documents_openai(docs, namespace="default"):
             }],
             namespace=namespace
         )
-
+        
 def extract_date_range(question: str):
     """Extracts the earliest and latest dates from a user's question."""
     parsed = dateparser.search.search_dates(question, settings={'PREFER_DATES_FROM': 'past'})
