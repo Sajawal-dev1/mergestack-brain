@@ -1,4 +1,4 @@
-# # main.py
+# main.py
 
 # import sys
 # from src.clickup.ingest_all import ingest_all_clickup_data

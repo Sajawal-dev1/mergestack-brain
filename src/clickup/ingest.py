@@ -16,34 +16,6 @@ def format_timestamp(ts):
     except (TypeError, ValueError, OverflowError):
         return None, None
 
-def extract_keywords(text):
-    """Extract keywords from text using simple rule-based logic."""
-    if not text or not isinstance(text, str):
-        return []
-    
-    # Convert to lowercase and remove punctuation
-    text = text.lower()
-    text = re.sub(r'[^\w\s]', '', text)
-    
-    # Split into words and remove stop words
-    stop_words = {
-        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has',
-        'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was',
-        'were', 'will', 'with'
-    }
-    words = [word for word in text.split() if word not in stop_words and len(word) > 2]
-    
-    # Get the most common words (limit to top 5)
-    word_counts = Counter(words)
-    keywords = [word for word, _ in word_counts.most_common(5)]
-    
-    # Add domain-specific terms if present
-    domain_terms = ['stripe', 'integration', 'payment', 'api', 'webhook']
-    for term in domain_terms:
-        if term in text:
-            keywords.append(term)
-    
-    return list(set(keywords))
 
 def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activity=None, list_name=None, folder_name=None, team_id=None):
     """Build documents for a task, its comments, replies, and activity with enriched content and metadata."""
@@ -82,42 +54,26 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
             else:
                 custom_fields.append(f"{name}: N/A")
 
-    # Generate keywords for hybrid search
-    keywords = [task_name.lower()] + [t.lower() for t in tags] + ([status.lower()] if status else [])
-    keywords.extend(extract_keywords(task_description))
-    for field in custom_fields:
-        keywords.extend(extract_keywords(field))
-    if "stripe" in task_name.lower() or any("stripe" in t.lower() for t in tags) or "stripe" in task_description.lower():
-        keywords.append("stripe")
-    if "integration" in task_name.lower() or any("integration" in t.lower() for t in tags) or "integration" in task_description.lower():
-        keywords.append("integration")
-    keywords = list(set(keywords))  # Remove duplicates
+
 
     base_metadata = {
-        "task_id": task_id,
         "task_name": task_name,
         "task_description": task_description,
-        "space_id": space_id,
-        "list_id": list_id,
-        "folder_id": folder_id or "None",
-        "folder_name": folder_name or "None",
+        "folder_name": folder_name.lower() if folder_name else "None",
         "list_name": list_name or "None",
-        "team_id": team_id or "None",
         "created_at": created,
         "created_at_ms": created_ms,
         "updated_at": updated,
         "updated_at_ms": updated_ms,
         "due_date": due_date or "None",
         "due_date_ms": due_date_ms or "None",
-        "assignees": assignee_names,
-        "assignee_ids": assignee_ids,
-        "status": status,
-        "priority": priority or "None",
-        "tags": tags,
-        "custom_fields": custom_fields,
+        "assignees" : [name.lower() for name in assignee_names],
+        "status": status.lower() if status else "none",
+        "priority": priority.lower() if priority else "none",
+        "tags": [tag.lower() for tag in tags],
         "comment_count": len(comments),
-        "keywords": keywords,
-        "source": "clickup"
+        "source": "clickup",
+        "project": folder_name.lower() if folder_name else "none"
     }
 
     docs = []
@@ -138,7 +94,8 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
         f"List: {list_name or 'None'}\n"
         f"Folder: {folder_name or 'None'}\n"
         f"Space ID: {space_id}\n"
-        f"Team ID: {team_id or 'None'}"
+        f"Team ID: {team_id or 'None'}\n"
+        f"Project: {folder_name or 'None'}\n"
     )
     if task_name or task_description:
         docs.append({
@@ -169,11 +126,11 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
             f"Comment Date: {comment_ts[:10] if comment_ts else 'Unknown'}\n"
             f"Comment: {comment_text}\n"
             f"List: {list_name or 'None'}\n"
-            f"Folder: {folder_name or 'None'}"
+            f"Folder: {folder_name or 'None'}\n"
+            f"Project: {folder_name or 'None'}\n"
         )
         discussion_text.append(comment_content)
-        comment_keywords = extract_keywords(comment_text)
-        keywords_combined = list(set(keywords + comment_keywords))
+
 
         docs.append({
             "content": comment_content.strip(),
@@ -188,7 +145,6 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
                 "full_timestamp": comment_ts,
                 "comment_id": c.get("id"),
                 "parent_task_id": task_id,
-                "keywords": keywords_combined,
                 "content": comment_content.strip(),
             }
         })
@@ -211,8 +167,6 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
                 f"Folder: {folder_name or 'None'}"
             )
             discussion_text.append(reply_content)
-            reply_keywords = extract_keywords(reply_text)
-            keywords_combined = list(set(keywords + reply_keywords))
 
             docs.append({
                 "content": reply_content.strip(),
@@ -220,14 +174,12 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
                     **base_metadata,
                     "document_type": "reply",
                     "user": reply_user,
-                    "user_id": reply_user_id,
                     "timestamp": reply_ts,
                     "timestamp_ms": reply_ts_ms,
                     "date": reply_ts[:10] if reply_ts else None,
                     "full_timestamp": reply_ts,
                     "parent_comment_id": c.get("id"),
                     "parent_task_id": task_id,
-                    "keywords": keywords_combined,
                     "content": reply_content.strip(),
                 }
             })
@@ -249,10 +201,9 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
             f"Activity Date: {act_ts[:10] if act_ts else 'Unknown'}\n"
             f"Activity: {act_text}\n"
             f"List: {list_name or 'None'}\n"
-            f"Folder: {folder_name or 'None'}"
+            f"Folder: {folder_name or 'None'}\n"
+            f"Project: {folder_name or 'None'}\n"
         )
-        act_keywords = extract_keywords(act_text)
-        keywords_combined = list(set(keywords + act_keywords))
 
         docs.append({
             "content": act_content.strip(),
@@ -267,7 +218,6 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
                 "full_timestamp": act_ts,
                 "activity_type": act_type,
                 "parent_task_id": task_id,
-                "keywords": keywords_combined,
                 "content": act_content.strip(),
             }
         })
@@ -281,7 +231,8 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
             f"{'\n\n'.join(discussion_text)}\n"
             f"{'-' * 40}\n"
             f"List: {list_name or 'None'}\n"
-            f"Folder: {folder_name or 'None'}"
+            f"Folder: {folder_name or 'None'}\n"
+            f"Project: {folder_name or 'None'}\n"
         )
         docs.append({
             "content": discussion_content.strip(),

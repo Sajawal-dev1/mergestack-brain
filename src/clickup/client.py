@@ -57,3 +57,8 @@ class ClickUpClient:
         url = f"{self.base_url}/task/{task_id}/activity"
         response = requests.get(url, headers=self.headers)
         return response.json()
+        
+    def get_task_time_in_status(self, task_id):
+         url = f"{self.base_url}/task/{task_id}/time_in_status"
+         response = requests.get(url, headers=self.headers)
+         return response.json()

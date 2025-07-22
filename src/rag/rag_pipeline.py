@@ -1,5 +1,5 @@
 import os
-from src.openai.client import get_embedder, get_llm
+from src.openai.client import extract_filters_from_question, get_embedder, get_llm
 from src.pinecone.client import get_pinecone_index_name
 from pinecone import Pinecone
 import dateparser.search
@@ -40,36 +40,98 @@ def store_documents_openai(docs, namespace="default"):
             namespace=namespace
         )
 
-def extract_date_range(question: str):
-    """Extracts the earliest and latest dates from a user's question."""
-    parsed = dateparser.search.search_dates(question, settings={'PREFER_DATES_FROM': 'past'})
-    if not parsed:
-        return None
-    dates = [dt for _, dt in parsed]
-    start = min(dates).date()
-    end = max(dates).date()
-    return start, end
+def convert_to_timestamp(date_str: str) -> int:
+    """Convert a date string 'YYYY-MM-DD' to Unix timestamp."""
+    return int(datetime.strptime(date_str, "%Y-%m-%d").timestamp())
+       
 
-def get_relevant_docs(question, namespace="default", metadata_filter=None):
-    """Retrieve relevant documents from Pinecone with content."""
+def build_pinecone_filter(question: str) -> dict:
+    extracted = extract_filters_from_question(question)
+    filter_conditions = []
+
+    # Assignees
+    if "assignees" in extracted:
+        assignees = [a.lower() for a in extracted["assignees"] if isinstance(a, str)]
+        filter_conditions.append({
+            "assignees": {"$in": assignees}
+        })
+
+
+    # Project
+    if "project" in extracted:
+        project = extracted["project"]
+        if isinstance(project, str):
+            project = project.lower()
+        filter_conditions.append({
+            "project": {"$eq": project}
+        })
+
+    # Status
+    if "status" in extracted:
+        status = extracted["status"]
+        if isinstance(status, str):
+            status = status.lower()
+        filter_conditions.append({
+            "status": {"$eq": status}
+        })
+
+
+    # Date range
+    if "date_range" in extracted:
+        dr = extracted["date_range"]
+        start = dr.get("start")
+        end = dr.get("end")
+
+        if start and end:
+            filter_conditions.append({
+                "$and": [
+                    {"updated_at_ms": {"$gte": convert_to_timestamp(start)}},
+                    {"updated_at_ms": {"$lte": convert_to_timestamp(end)}}
+                ]
+            })
+        elif start:
+            filter_conditions.append({
+                "updated_at_ms": {"$gte": convert_to_timestamp(start)}
+            })
+        elif end:
+            filter_conditions.append({
+                "updated_at_ms": {"$lte": convert_to_timestamp(end)}
+            })
+
+    # Final output: wrap in $or if multiple filters exist
+    if len(filter_conditions) > 1:
+        return {"$or": filter_conditions}
+    elif filter_conditions:
+        return filter_conditions[0]
+    else:
+        return {}
+
+
+
+def get_relevant_docs(question, namespace="default"):
+    """Retrieve relevant documents from Pinecone with content based on dynamic filters."""
     pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     index_name = get_pinecone_index_name()
     index = pc.Index(index_name)
 
     embedder = get_embedder()
     embedding = embedder(question)
+
+    # 🔥 NEW: Dynamically extract metadata filter
+    metadata_filter = build_pinecone_filter(question)
+
     results = index.query(
         vector=embedding,
-        top_k=5,
+        top_k=10,
         namespace=namespace,
         filter=metadata_filter if metadata_filter else {},
         include_metadata=True
     )
     # Return list of documents with id and content (assuming content is in metadata or payload)
+    print(len(results["matches"]))
     docs = []
     for match in results["matches"]:
         doc_id = match["id"]
-        # Change "metadata" or "payload" to your actual field name storing document content
         content = match.get("metadata", {}).get("content") or match.get("payload", {}).get("content")
         if content is None:
             content = "<no content available>"
@@ -77,22 +139,9 @@ def get_relevant_docs(question, namespace="default", metadata_filter=None):
     return docs
 
 
+
 def run_rag_pipeline(question: str, namespace="default") -> str:
     """RAG pipeline using Open AI SDK."""
-    metadata_filter = None
-
-    date_range = extract_date_range(question)
-    if date_range:
-        start_date, end_date = date_range
-        start_dt = datetime.combine(start_date, datetime.min.time())
-        end_dt = datetime.combine(end_date, datetime.min.time())
-        start_ms = int(start_dt.timestamp() * 1000)
-        end_ms = int(end_dt.timestamp() * 1000)
-        if start_date == end_date:
-            metadata_filter = {"created_at_ms": {"$eq": start_ms}}
-        else:
-            metadata_filter = {"created_at_ms": {"$gte": start_ms, "$lte": end_ms}}
-
     relevant_docs = get_relevant_docs(question, namespace)
     context = "\n".join([f"Doc ID: {doc_id}" for doc_id in relevant_docs])
 
