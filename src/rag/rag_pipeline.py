@@ -6,6 +6,9 @@ import dateparser.search
 from datetime import datetime, timedelta
 import hashlib
 
+from src.utils.helpers  import date_to_milliseconds
+
+
 
 def store_documents_openai(docs, namespace="default"):
     """Store documents in Pinecone using OpenAI embeddings."""
@@ -40,10 +43,6 @@ def store_documents_openai(docs, namespace="default"):
             namespace=namespace
         )
 
-def convert_to_timestamp(date_str: str) -> int:
-    """Convert a date string 'YYYY-MM-DD' to Unix timestamp."""
-    return int(datetime.strptime(date_str, "%Y-%m-%d").timestamp())
-       
 
 def build_pinecone_filter(question: str) -> dict:
     extracted = extract_filters_from_question(question)
@@ -85,22 +84,22 @@ def build_pinecone_filter(question: str) -> dict:
         if start and end:
             filter_conditions.append({
                 "$and": [
-                    {"updated_at_ms": {"$gte": convert_to_timestamp(start)}},
-                    {"updated_at_ms": {"$lte": convert_to_timestamp(end)}}
+                    {"updated_at_ms": {"$gte": date_to_milliseconds(start)}},
+                    {"updated_at_ms": {"$lte": date_to_milliseconds(end)}}
                 ]
             })
         elif start:
             filter_conditions.append({
-                "updated_at_ms": {"$gte": convert_to_timestamp(start)}
+                "updated_at_ms": {"$gte": date_to_milliseconds(start)}
             })
         elif end:
             filter_conditions.append({
-                "updated_at_ms": {"$lte": convert_to_timestamp(end)}
+                "updated_at_ms": {"$lte": date_to_milliseconds(end)}
             })
 
     # Final output: wrap in $or if multiple filters exist
     if len(filter_conditions) > 1:
-        return {"$or": filter_conditions}
+        return {"$and": filter_conditions}
     elif filter_conditions:
         return filter_conditions[0]
     else:
@@ -141,10 +140,31 @@ def get_relevant_docs(question, namespace="default"):
 
 
 def run_rag_pipeline(question: str, namespace="default") -> str:
-    """RAG pipeline using Open AI SDK."""
+    """RAG pipeline using OpenAI SDK with enhanced prompting for quality responses."""
     relevant_docs = get_relevant_docs(question, namespace)
-    context = "\n".join([f"Doc ID: {doc_id}" for doc_id in relevant_docs])
+
+    context = "\n\n".join(
+        [f"Document {i+1}:\n{doc['content']}" for i, doc in enumerate(relevant_docs)]
+        if relevant_docs else ["No relevant documents found."]
+    )
+
+    prompt = f"""You are an expert assistant helping answer questions based on the following context.
+
+Context:
+{context}
+
+Instructions:
+- Answer the question based only on the context above.
+- If the context does not contain enough information, say "I don't know based on the provided context."
+- Be concise, accurate, and well-structured.
+
+Question: {question}
+"""
 
     llm = get_llm()
-    response = llm([{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": f"Based on this context: {context}\n\nQuestion: {question}"}])
+    response = llm([
+        {"role": "system", "content": "You are a helpful assistant trained to answer questions using provided documents."},
+        {"role": "user", "content": prompt}
+    ])
+
     return response

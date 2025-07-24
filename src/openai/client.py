@@ -2,6 +2,8 @@ import os
 from dotenv import load_dotenv
 import openai
 import json
+from datetime import datetime
+
 
 
 load_dotenv()
@@ -29,9 +31,11 @@ def extract_filters_from_question(question: str) -> dict:
     Extracts metadata and date filters from a natural language question using OpenAI.
     Returns a Pinecone-compatible filter dictionary.
     """
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")  # Use UTC as mentioned
 
-    system_prompt = """
+    system_prompt = f"""
 You are an assistant that extracts structured metadata filters from natural language questions.
+Today's date is {today_str}.
 Always respond with a valid JSON object. Supported fields:
 
 - assignees: list of strings (e.g., ["Ali", "Sajawal khan"])
@@ -41,30 +45,30 @@ Always respond with a valid JSON object. Supported fields:
 
 All natural language date expressions (like 'yesterday', 'this week', or 'last Monday')
 must be resolved to actual UTC calendar dates in 'YYYY-MM-DD' format.
-
+"this week" means current week Monday to Friday, "last week" means last week's Monday to Friday, and so on.
 Respond ONLY with the JSON object.
 
 Examples:
 
 Q: What did Sajawal khan do yesterday?
 A:
-{
+{{
   "assignees": ["Sajawal khan"],
-  "date_range": {
-    "start": "2025-07-21",
-    "end": "2025-07-21"
-  }
-}
+  "date_range": {{
+    "start": "2025-07-23",
+    "end": "2025-07-23"
+  }}
+}}
 
 Q: Show MIRA project updates this week
 A:
-{
+{{
   "project": "MIRA",
-  "date_range": {
+  "date_range": {{
     "start": "2025-07-21",
     "end": "2025-07-27"
-  }
-}
+  }}
+}}
 """
 
     response = client.chat.completions.create(
@@ -81,4 +85,5 @@ A:
     except Exception as e:
         print("Error parsing filter JSON:", e)
         return {}
+
    
