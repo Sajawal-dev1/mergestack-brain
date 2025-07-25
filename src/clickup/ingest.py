@@ -7,6 +7,12 @@ from collections import Counter
 
 from src.utils.helpers  import date_to_milliseconds, to_human_readable_date
 
+def safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 
 def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activity=None, list_name=None, folder_name=None, team_id=None):
     """Build documents for a task, its comments, replies, and activity with enriched content and metadata."""
@@ -17,11 +23,11 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
     task_name = task.get("name", "Unnamed Task")
     task_description = task.get("description", "") or "No description provided"
     created=to_human_readable_date(task.get("date_created"))
-    created_ms = date_to_milliseconds(task.get("date_created"))
+    created_ms = safe_int(task.get("date_created"))
     updated = to_human_readable_date(task.get("date_updated"))
-    updated_ms = date_to_milliseconds(task.get("date_updated"))
+    updated_ms = safe_int(task.get("date_updated"))
     due_date = to_human_readable_date(task.get("due_date", 'none'))
-    due_date_ms = date_to_milliseconds(task.get("due_date", 'none'))
+    due_date_ms = safe_int(task.get("due_date", 'none'))
     assignees = task.get("assignees", [])
     assignee_names = [a.get("username", "Unknown") for a in assignees if isinstance(a, dict)]
     assignee_ids = [str(a.get("id", "")) for a in assignees if isinstance(a, dict) and a.get("id")]
@@ -112,7 +118,7 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
             continue
 
         comment_ts=to_human_readable_date(c.get("date"))
-        comment_ts_ms = date_to_milliseconds(c.get("date"))
+        comment_ts_ms = safe_int(c.get("date"))
         comment_user = c.get("user", {}).get("username", "Unknown")
         comment_user_id = str(c.get("user", {}).get("id", "Unknown"))
         comment_content = (
@@ -150,7 +156,7 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
                 continue
 
             reply_ts = to_human_readable_date(reply.get("date"))
-            reply_ts_ms = date_to_milliseconds(reply.get("date"))
+            reply_ts_ms = safe_int(reply.get("date"))
             reply_user = reply.get("user", {}).get("username", "Unknown")
             reply_content = (
                 f"Task Title: {task_name}\n"
@@ -182,7 +188,7 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
     # 3. Activity Items
     for a in activity:
         act_ts = to_human_readable_date(a.get("date"))
-        act_ts_ms = date_to_milliseconds(a.get("date"))
+        act_ts_ms = safe_int(a.get("date"))
         act_text = a.get("text_content", "").strip()
         act_type = a.get("type", "Unknown")
         act_user = a.get("username", "Unknown")

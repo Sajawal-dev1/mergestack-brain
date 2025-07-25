@@ -5,7 +5,7 @@ from pinecone import Pinecone
 import dateparser.search
 from datetime import datetime, timedelta
 import hashlib
-
+from datetime import datetime
 from src.utils.helpers  import date_to_milliseconds
 
 
@@ -142,6 +142,8 @@ def get_relevant_docs(question, namespace="default"):
 def run_rag_pipeline(question: str, namespace="default") -> str:
     """RAG pipeline using OpenAI SDK with enhanced prompting for quality responses."""
     relevant_docs = get_relevant_docs(question, namespace)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
 
     context = "\n\n".join(
         [f"Document {i+1}:\n{doc['content']}" for i, doc in enumerate(relevant_docs)]
@@ -150,12 +152,15 @@ def run_rag_pipeline(question: str, namespace="default") -> str:
 
     prompt = f"""You are an expert assistant helping answer questions based on the following context.
 
+Today's date: {today_str}
+
 Context:
 {context}
 
 Instructions:
 - Answer the question based only on the context above.
-- If the context does not contain enough information, say "I don't know based on the provided context."
+- If the most recent document appears up to date or contains a recent timestamp, respond accordingly.
+- If no context is provided, say "I don't know based on the provided context."
 - Be concise, accurate, and well-structured.
 
 Question: {question}

@@ -6,6 +6,7 @@ from datetime import datetime
 
 
 
+
 load_dotenv()
 
 client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -26,27 +27,36 @@ def get_llm():
 
 
 
+
+
 def extract_filters_from_question(question: str) -> dict:
     """
-    Extracts metadata and date filters from a natural language question using OpenAI.
-    Returns a Pinecone-compatible filter dictionary.
+    Extracts metadata and date filters from a natural language question.
+    Uses local timezone and ensures full-day date ranges (00:00:00 to 23:59:59).
     """
-    today_str = datetime.utcnow().strftime("%Y-%m-%d")  # Use UTC as mentioned
+    # Get local timezone date
+    local_tz = datetime.now().astimezone().tzinfo
+    today_str = datetime.now(local_tz).strftime("%Y-%m-%d")
 
     system_prompt = f"""
 You are an assistant that extracts structured metadata filters from natural language questions.
-Today's date is {today_str}.
-Always respond with a valid JSON object. Supported fields:
+Today's date is {today_str} (local timezone).
+
+Respond ONLY with a valid JSON object. Supported fields:
 
 - assignees: list of strings (e.g., ["Ali", "Sajawal khan"])
 - project: string
 - status: string
-- date_range: object with optional 'start' and 'end' keys in YYYY-MM-DD format
+- date_range: object with optional 'start' and 'end' keys in YYYY-MM-DDTHH:MM:SS format (24-hour clock)
 
-All natural language date expressions (like 'yesterday', 'this week', or 'last Monday')
-must be resolved to actual UTC calendar dates in 'YYYY-MM-DD' format.
-"this week" means current week Monday to Friday, "last week" means last week's Monday to Friday, and so on.
-Respond ONLY with the JSON object.
+Rules:
+- Always use **local timezone calendar dates**, not UTC.
+- "today", "yesterday", or day names ("this Tuesday") should return **full day**, i.e.:
+  - start: YYYY-MM-DDT00:00:00
+  - end:   YYYY-MM-DDT23:59:59
+- For week-based ranges:
+  - "this week" = current week (Monday 00:00 to Friday 23:59)
+  - "last week" = previous week's Monday to Friday
 
 Examples:
 
@@ -55,8 +65,8 @@ A:
 {{
   "assignees": ["Sajawal khan"],
   "date_range": {{
-    "start": "2025-07-23",
-    "end": "2025-07-23"
+    "start": "2025-07-24T00:00:00",
+    "end": "2025-07-24T23:59:59"
   }}
 }}
 
@@ -65,8 +75,8 @@ A:
 {{
   "project": "MIRA",
   "date_range": {{
-    "start": "2025-07-21",
-    "end": "2025-07-27"
+    "start": "2025-07-21T00:00:00",
+    "end": "2025-07-25T23:59:59"
   }}
 }}
 """
@@ -85,5 +95,3 @@ A:
     except Exception as e:
         print("Error parsing filter JSON:", e)
         return {}
-
-   
