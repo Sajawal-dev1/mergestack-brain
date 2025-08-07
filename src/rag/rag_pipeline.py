@@ -65,14 +65,22 @@ def build_pinecone_filter(question: str) -> dict:
             "project": {"$eq": project}
         })
 
-    # Status
-    if "status" in extracted:
-        status = extracted["status"]
-        if isinstance(status, str):
-            status = status.lower()
+    if "task_name" in extracted:
+        task_name = extracted["task_name"]
+        if isinstance(task_name, str):
+            task_name = task_name.lower()
         filter_conditions.append({
-            "status": {"$eq": status}
-        })
+            "task_name": {"$eq": task_name}
+        })    
+
+    # # Status
+    # if "status" in extracted:
+    #     status = extracted["status"]
+    #     if isinstance(status, str):
+    #         status = status.lower()
+    #     filter_conditions.append({
+    #         "status": {"$eq": status}
+    #     })
 
 
     # Date range
@@ -125,6 +133,7 @@ def get_relevant_docs(question, namespace="default"):
         namespace=namespace,
         filter=metadata_filter if metadata_filter else {},
         include_metadata=True
+
     )
     # Return list of documents with id and content (assuming content is in metadata or payload)
     print(len(results["matches"]))
@@ -150,7 +159,7 @@ def run_rag_pipeline(question: str, namespace="default") -> str:
         if relevant_docs else ["No relevant documents found."]
     )
 
-    prompt = f"""You are an expert assistant helping answer questions based on the following context.
+    prompt = f"""You are a knowledgeable assistant tasked with answering questions based solely on the following context.
 
 Today's date: {today_str}
 
@@ -158,18 +167,22 @@ Context:
 {context}
 
 Instructions:
-- Answer the question based only on the context above.
-- If the most recent document appears up to date or contains a recent timestamp, respond accordingly.
-- If no context is provided, say "I don't know based on the provided context."
-- Be concise, accurate, and well-structured.
+- Carefully read and consider the context provided above.
+- Structure your answer clearly and logically. If the information can be presented in bullet points or lists, do so.
+- Provide an introduction or summary where necessary, followed by relevant details.
+- If the most recent document contains recent timestamps or updates, use that information to craft your answer.
+- Be concise, well-structured, and accurate.
 
 Question: {question}
+
+Answer:
 """
 
     llm = get_llm()
     response = llm([
-        {"role": "system", "content": "You are a helpful assistant trained to answer questions using provided documents."},
+        {"role": "system", "content": "You're a helpful AI assistant trained on ClickUp task data."},
         {"role": "user", "content": prompt}
     ])
 
     return response
+

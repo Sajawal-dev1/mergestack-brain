@@ -46,7 +46,7 @@ Respond ONLY with a valid JSON object. Supported fields:
 
 - assignees: list of strings (e.g., ["Ali", "Sajawal khan"])
 - project: string
-- status: string
+- task_name:string
 - date_range: object with optional 'start' and 'end' keys in YYYY-MM-DDTHH:MM:SS format (24-hour clock)
 
 Rules:
@@ -74,6 +74,16 @@ Q: Show MIRA project updates this week
 A:
 {{
   "project": "MIRA",
+  "date_range": {{
+    "start": "2025-07-21T00:00:00",
+    "end": "2025-07-25T23:59:59"
+  }}
+}}
+
+Q: Which projects is Sajawal khan actively working on this week?
+A:
+{{
+  "assignees": ["Sajawal khan"],
   "date_range": {{
     "start": "2025-07-21T00:00:00",
     "end": "2025-07-25T23:59:59"

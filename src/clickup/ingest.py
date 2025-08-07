@@ -57,7 +57,7 @@ def build_clickup_docs(task, list_id, folder_id, space_id, comments=None, activi
 
 
     base_metadata = {
-        "task_name": task_name,
+        "task_name": task_name.lower(),
         "task_description": task_description,
         "folder_name": folder_name.lower() if folder_name else "None",
         "list_name": list_name or "None",
